@@ -325,7 +325,7 @@ minetest.register_node("default:sign_on_wall", {
 		"sign_wall.png",
 		"sign_wall.png",
 		"sign_wall.png",
-		"sign_wall_back.png",
+  "sign_wall.png",
 		"sign_wall.png"
 	},
 	inventory_image = "sign_wall.png",
