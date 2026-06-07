@@ -1,4 +1,4 @@
 mt_nostalgia
 ============
 
-Repo for my mt_nostalgia gamemode for Minetest
+My updated Minetest Nostalgia fork for Luanti
