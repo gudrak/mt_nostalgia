@@ -1,234 +1,213 @@
--- minetest/creative/init.lua
-
--- SETTINGS --
-
--- Shows the trash slot to players in survival mode
-local SURVIVAL_TRASH = true
-
--- "Special" Mode
-local ALL_THE_THINGS = false
-
--- END OF SETTINGS --
-
-
-
-
-
--- Register a "creative" priv
-minetest.register_privilege("creative", {
-	description = "Can use the creative inventory",
-	give_to_singleplayer = false,
-})
-
 creative_inventory = {}
 creative_inventory.creative_inventory_size = 0
 
--- Determine if the player is running in creative mode
 function creative_inventory.is_creative(player)
-    playername=player:get_player_name()
-	if minetest.check_player_privs(playername, {creative=true}) or
-	   minetest.setting_getbool("creative_mode") then
-		return true
-	end
+    if not player then return false end
+    local name = player:get_player_name()
+    return minetest.check_player_privs(name, {creative = true}) or
+           minetest.settings:get_bool("creative_mode")
 end
 
--- Create detached creative inventory after loading all mods
-minetest.after(0, function()
-	local inv = minetest.create_detached_inventory("creative", {
-		allow_move = function(inv, from_list, from_index, to_list, to_index, count, player)
-			if creative_inventory.is_creative(player) then
-				return count
-			else
-				return 0
-			end
-		end,
-		allow_put = function(inv, listname, index, stack, player)
-			return 0
-		end,
-		allow_take = function(inv, listname, index, stack, player)
-			if creative_inventory.is_creative(player) then
-				return -1
-			else
-				return 0
-			end
-		end,
-		on_move = function(inv, from_list, from_index, to_list, to_index, count, player)
-		end,
-		on_put = function(inv, listname, index, stack, player)
-		end,
-		on_take = function(inv, listname, index, stack, player)
-			print(player:get_player_name().." takes item from creative inventory; listname="..dump(listname)..", index="..dump(index)..", stack="..dump(stack))
-			if stack then
-				print("stack:get_name()="..dump(stack:get_name())..", stack:get_count()="..dump(stack:get_count()))
-			end
-		end,
-	})
-	local creative_list = {}
-	for name,def in pairs(minetest.registered_items) do
-		if (not def.groups.not_in_creative_inventory or def.groups.not_in_creative_inventory == 0)
-				and def.description and def.description ~= "" then
-			table.insert(creative_list, name)
-		end
-	end
-	table.sort(creative_list)
-	inv:set_size("main", #creative_list)
-	for _,itemstring in ipairs(creative_list) do
-		local stack = ItemStack(itemstring)
-		stack:set_count(stack:get_stack_max())
-		inv:add_item("main", stack)
-	end
-	creative_inventory.creative_inventory_size = #creative_list
-	print("creative inventory size: "..dump(creative_inventory.creative_inventory_size))
+local function is_inv_empty(inv)
+    local lists = inv:get_lists()
+    for k, v in pairs(lists) do
+        if not inv:is_empty(k) then return false end
+    end
+    return true
+end
+
+-- 1. LÓGICA DE PICADO (BLOQUEO DE DROPS Y VACIADO DE INVENTARIOS)
+minetest.register_on_mods_loaded(function()
+    for name, def in pairs(minetest.registered_nodes) do
+        -- Guardamos las funciones originales de cada nodo
+        local original_on_dig = def.on_dig
+        local original_can_dig = def.can_dig
+
+        -- 1.1. Permitir a los jugadores creativos picar cofres llenos
+        if original_can_dig then
+            minetest.override_item(name, {
+                can_dig = function(pos, player)
+                    if player and creative_inventory.is_creative(player) then
+                        return true
+                    end
+                    return original_can_dig(pos, player)
+                end
+            })
+        end
+
+        -- 1.2. Sobrescribir el evento de picado de forma segura
+        if original_on_dig then
+            minetest.override_item(name, {
+                on_dig = function(pos, node, digger, ...)
+                    if not digger or not creative_inventory.is_creative(digger) then
+                        -- MODO SUPERVIVENCIA: Usamos la función original del nodo sin riesgo de nil
+                        return original_on_dig(pos, node, digger, ...)
+                    end
+
+                    -- ==== MODO CREATIVO ====
+                    local inv_player = digger:get_inventory()
+                    local node_name = node.name
+
+                    -- Rescatar inventario de cofres ANTES de que el motor destruya el nodo
+                    local meta = minetest.get_meta(pos)
+                    local inv_node = meta:get_inventory()
+                    if inv_node and not is_inv_empty(inv_node) then
+                        for _, list in pairs(inv_node:get_lists()) do
+                            for _, stack in ipairs(list) do
+                                if not stack:is_empty() then
+                                    inv_player:add_item("main", stack)
+                                end
+                            end
+                        end
+                    end
+
+                    -- Bloquear los drops temporales en el motor
+                    local real_handle = minetest.handle_node_drops
+                    local real_drop = minetest.item_drop
+                    minetest.handle_node_drops = function() end
+                    minetest.item_drop = function() end
+
+                    -- Picar el nodo (esto activa sonidos, partículas y desgaste nativo)
+                    original_on_dig(pos, node, digger, ...)
+
+                    -- Restaurar el motor
+                    minetest.handle_node_drops = real_handle
+                    minetest.item_drop = real_drop
+
+                    -- Asegurar colección: 1 unidad del bloque al inventario del jugador
+                    if inv_player and not inv_player:contains_item("main", node_name) then
+                        inv_player:add_item("main", ItemStack(node_name .. " 1"))
+                    end
+
+                    return true
+                end
+            })
+        end
+    end
 end)
 
--- Create the trash field
+-- 2. LA SUPER MANO (42/256)
+local digtime = 42
+local caps = {times = {digtime, digtime, digtime}, uses = 0, maxlevel = 256}
+
+minetest.register_item("creative:super_hand", {
+    type = "none",
+    wield_image = "wieldhand.png",
+    wield_scale = {x=1, y=1, z=2.5},
+    range = 10,
+    tool_capabilities = {
+        full_punch_interval = 0.5,
+        max_drop_level = 3,
+        groupcaps = {
+            crumbly = caps, cracky = caps, snappy = caps, choppy = caps,
+            oddly_breakable_by_hand = caps,
+            dig_immediate = {times = {[2] = digtime, [3] = 0}, uses = 0, maxlevel = 256},
+        },
+        damage_groups = {fleshy = 100},
+    }
+})
+
+function creative_inventory.update_hand(player)
+    local inv = player:get_inventory()
+    if creative_inventory.is_creative(player) then
+        inv:set_size("hand", 1)
+        inv:set_stack("hand", 1, "creative:super_hand")
+    else
+        inv:set_size("hand", 0)
+    end
+end
+
+-- 3. UI Y PRIVILEGIOS
+local function update_everything(name)
+    local player = minetest.get_player_by_name(name)
+    if player then
+        minetest.after(0, function()
+            if creative_inventory.is_creative(player) then
+                creative_inventory.set_creative_formspec(player, 0, 1)
+            else
+                creative_inventory.set_survival_formspec(player)
+            end
+            creative_inventory.update_hand(player)
+        end)
+    end
+end
+
+minetest.register_privilege("creative", {
+    description = "Modo creativo",
+    give_to_singleplayer = false,
+    on_grant = update_everything,
+    on_revoke = update_everything,
+})
+
+-- 4. INVENTARIO DETACHED (CATÁLOGO)
+minetest.register_on_mods_loaded(function()
+    local inv = minetest.create_detached_inventory("creative", {
+        allow_move = function(inv, from_list, from_index, to_list, to_index, count, player)
+            return creative_inventory.is_creative(player) and count or 0
+        end,
+        allow_take = function(inv, listname, index, stack, player)
+            return creative_inventory.is_creative(player) and -1 or 0
+        end,
+        allow_put = function() return 0 end,
+    })
+    local creative_list = {}
+    for name, def in pairs(minetest.registered_items) do
+        if (not def.groups.not_in_creative_inventory or def.groups.not_in_creative_inventory == 0)
+                and def.description and def.description ~= "" then
+            table.insert(creative_list, name)
+        end
+    end
+    table.sort(creative_list)
+    inv:set_size("main", #creative_list)
+    for _, item in ipairs(creative_list) do
+        inv:add_item("main", ItemStack(item))
+    end
+    creative_inventory.creative_inventory_size = #creative_list
+end)
+
 local trash = minetest.create_detached_inventory("creative_trash", {
-	-- Allow the stack to be placed and remove it in on_put()
-	-- This allows the creative inventory to restore the stack
-	allow_put = function(inv, listname, index, stack, player)
-			return stack:get_count()
-	end,
-	on_put = function(inv, listname, index, stack, player)
-		inv:set_stack(listname, index, "")
-	end,
+    allow_put = function(inv, listname, index, stack, player) return stack:get_count() end,
+    on_put = function(inv, listname, index, stack, player) inv:set_stack(listname, index, "") end,
 })
 trash:set_size("main", 1)
 
-
--- Create the refill field
-local refill = minetest.create_detached_inventory("creative_refill", {
-	-- Allow the stack to be placed and remove it in on_put()
-	-- This allows the creative inventory to restore the stack
-	allow_put = function(inv, listname, index, stack, player)
-			return stack:get_count()
-	end,
-	on_put = function(inv, listname, index, stack, player)
-	if stack:get_wear() == 0 then
-			inv:set_stack(listname, index, "")
-			stack:set_count(stack:get_stack_max())
-			inv:add_item("main", stack)
-	else
-		print("Tool detected in refill slot. Current wear is: "..tostring(stack:get_wear())..". Will add "..tostring((-1)*stack:get_wear()).." wear.")
-		stack:add_wear((-1)*stack:get_wear())
-		print("Tool now has "..tostring(stack:get_wear()).." wear.")
-		inv:set_stack(listname, index, "")
-		inv:add_item("main", stack)
-	end
-
-	end,
-})
-refill:set_size("main", 1)
-
-
+-- 5. FORMSPECS
 creative_inventory.set_creative_formspec = function(player, start_i, pagenum)
-	pagenum = math.floor(pagenum)
-	local pagemax = math.floor((creative_inventory.creative_inventory_size-1) / (6*4) + 1)
-	local formspec = ("size[13,7.5]"..
-			--"image[6,0.6;1,2;player.png]"..
-			"list[current_player;main;5,3.5;8,4;]"..
-			"list[current_player;craft;8,0;3,3;]"..
-			"list[current_player;craftpreview;12,1;1,1;]"..
-			"list[detached:creative;main;0.3,0.5;4,6;"..tostring(start_i).."]"..
-			"label[2.0,6.55;"..tostring(pagenum).."/"..tostring(pagemax).."]"..
-			"button[0.3,6.5;1.6,1;creative_prev;<<]"..
-			"button[2.7,6.5;1.6,1;creative_next;>>]"..
-			"label[5,1.5;Trash:]"..
-			"list[detached:creative_trash;main;5,2;1,1;]"..
-			"label[5,0;Refill:]"..
-			"list[detached:creative_refill;main;5,0.5;1,1;]")
-	if (ALL_THE_THINGS) then
-		formspec = formspec.."button[6,2.7;2.5,1;clear;Remove _ALL_ the things!]".."image_button[6,1;2,2;all_the_things.png;clear;]"
-	else
-		formspec = formspec.."button[6,2;2,1;clear;Clear Inventory]"
-	end
-	player:set_inventory_formspec(formspec)
+    local pagemax = math.max(1, math.ceil(creative_inventory.creative_inventory_size / 24))
+    local formspec = "size[13,7.5]list[current_player;main;5,3.5;8,4;]" ..
+        "list[current_player;craft;8,0;3,3;]list[current_player;craftpreview;12,1;1,1;]" ..
+        "list[detached:creative;main;0.3,0.5;4,6;"..tostring(start_i).."]" ..
+        "label[2.0,6.55;"..tostring(pagenum).."/"..tostring(pagemax).."]" ..
+        "button[0.3,6.5;1.6,1;creative_prev;<<]button[2.7,6.5;1.6,1;creative_next;>>]" ..
+        "label[5,1.5;Papelera:]list[detached:creative_trash;main;5,2;1,1;]"
+    player:set_inventory_formspec(formspec)
 end
+
 creative_inventory.set_survival_formspec = function(player)
-	local formspec = player:get_inventory_formspec()
-	if (SURVIVAL_TRASH) then
-		formspec = formspec.."list[detached:creative_trash;main;0,2;1,1;]".."label[0,1.5;Trash:]"
-	end
-	player:set_inventory_formspec(formspec)
+    local formspec = "size[8,8.5]list[current_player;main;0,4.5;8,4;]" ..
+        "list[current_player;craft;3,0;3,3;]list[current_player;craftpreview;7,1;1,1;]" ..
+        "list[detached:creative_trash;main;0,2;1,1;]label[0,1.5;Papelera:]"
+    player:set_inventory_formspec(formspec)
 end
-creative_inventory.clear_inventory = function(player)
-		player:get_inventory():set_list("main", {})
-		local player_name = player:get_player_name()
-		minetest.chat_send_player(player_name, 'Inventory Cleared!')
-end
+
+-- 6. CALLBACKS
 minetest.register_on_joinplayer(function(player)
-	-- If in creative mode, modify player's inventory forms
-	if not creative_inventory.is_creative(player) then
-		creative_inventory.set_survival_formspec(player)
-		return
-	end
-	creative_inventory.set_creative_formspec(player, 0, 1)
+    update_everything(player:get_player_name())
 end)
+
 minetest.register_on_player_receive_fields(function(player, formname, fields)
-	-- Figure out current page from formspec
-	local current_page = 0
-	local formspec = player:get_inventory_formspec()
-	local start_i = string.match(formspec, "list%[detached:creative;main;[%d.]+,[%d.]+;[%d.]+,[%d.]+;(%d+)%]")
-	start_i = tonumber(start_i) or 0
-
-	if fields.clear then
-		creative_inventory.clear_inventory(player)
-	end
-	if creative_inventory.is_creative(player) then
-		if fields.creative_prev then
-			start_i = start_i - 4*6
-		end
-		if fields.creative_next then
-			start_i = start_i + 4*6
-		end
-
-		if start_i < 0 then
-			start_i = start_i + 4*6
-		end
-		if start_i >= creative_inventory.creative_inventory_size then
-			start_i = start_i - 4*6
-		end
-		
-		if start_i < 0 or start_i >= creative_inventory.creative_inventory_size then
-			start_i = 0
-		end
-
-		creative_inventory.set_creative_formspec(player, start_i, start_i / (6*4) + 1)
-	end
+    if not creative_inventory.is_creative(player) then return end
+    local formspec = player:get_inventory_formspec()
+    local start_i = tonumber(string.match(formspec, "list%[detached:creative;main;.-;.-;(%d+)%]")) or 0
+    if fields.creative_prev or fields.creative_next then
+        if fields.creative_prev then start_i = math.max(0, start_i - 24)
+        elseif fields.creative_next and (start_i + 24 < creative_inventory.creative_inventory_size) then
+            start_i = start_i + 24
+        end
+        creative_inventory.set_creative_formspec(player, start_i, math.floor(start_i / 24) + 1)
+    end
 end)
 
-if minetest.setting_getbool("creative_mode") then
-	
-	minetest.register_item(":", {
-		type = "none",
-		wield_image = "wieldhand.png",
-		wield_scale = {x=1,y=1,z=2.5},
-		tool_capabilities = {
-			full_punch_interval = 0.5,
-			max_drop_level = 3,
-			groupcaps = {
-				crumbly = {times={[1]=0.5, [2]=0.5, [3]=0.5}, uses=0, maxlevel=3},
-				cracky = {times={[1]=0.5, [2]=0.5, [3]=0.5}, uses=0, maxlevel=3},
-				snappy = {times={[1]=0.5, [2]=0.5, [3]=0.5}, uses=0, maxlevel=3},
-				choppy = {times={[1]=0.5, [2]=0.5, [3]=0.5}, uses=0, maxlevel=3},
-				oddly_breakable_by_hand = {times={[1]=0.5, [2]=0.5, [3]=0.5}, uses=0, maxlevel=3},
-			},
-			damage_groups = {fleshy = 10},
-		}
-	})
-	
-	function minetest.handle_node_drops(pos, drops, digger)
-		if not digger or not digger:is_player() then
-			return
-		end
-		local inv = digger:get_inventory()
-		if inv then
-			for _,item in ipairs(drops) do
-				item = ItemStack(item):get_name()
-				if not inv:contains_item("main", item) then
-					inv:add_item("main", item)
-				end
-			end
-		end
-	end
-	
-end
+minetest.register_on_placenode(function(pos, newnode, placer, oldnode, itemstack)
+    if creative_inventory.is_creative(placer) then return true end
+end)
