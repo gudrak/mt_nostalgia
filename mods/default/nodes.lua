@@ -297,6 +297,7 @@ minetest.register_node("default:sign_yard", {
 	wield_image = "sign.png",
 	paramtype = "light",
 	paramtype2 = "facedir",
+    use_texture_alpha = "clip",
 	node_box = {
 		type = "fixed",
 		fixed = {
@@ -309,23 +310,33 @@ minetest.register_node("default:sign_yard", {
 	legacy_wallmounted = true,
 	sounds = default.node_sound_defaults(),
 	on_construct = function(pos)
-		--local n = minetest.get_node(pos)
 		local meta = minetest.get_meta(pos)
 		meta:set_string("formspec", "field[text;;${text}]")
-		meta:set_string("infotext", "\"\"")
 	end,
 	on_receive_fields = function(pos, formname, fields, sender)
-		--print("Sign at "..minetest.pos_to_string(pos).." got "..dump(fields))
-		if minetest.is_protected(pos, sender:get_player_name()) then
-			minetest.record_protection_violation(pos, sender:get_player_name())
+		if not fields.quit then
+			return -- workaround for https://github.com/luanti-org/luanti/issues/16187
+		end
+		local player_name = sender:get_player_name()
+		if minetest.is_protected(pos, player_name) then
+			minetest.record_protection_violation(pos, player_name)
 			return
 		end
+		local text = fields.text
+		if not text then return end
+		if #text > 512 then
+			minetest.chat_send_player(player_name, "Text too long")
+			return
+		end
+		text = text:gsub("[%z-\8\11-\31\127]", "")
+		minetest.log("action", player_name .. " wrote to sign at " .. minetest.pos_to_string(pos) .. ": " .. text)
 		local meta = minetest.get_meta(pos)
-		fields.text = fields.text or ""
-		print((sender:get_player_name() or "").." wrote \""..fields.text..
-				"\" to sign at "..minetest.pos_to_string(pos))
-		meta:set_string("text", fields.text)
-		meta:set_string("infotext", '"'..fields.text..'"')
+		meta:set_string("text", text)
+		if #text > 0 then
+			meta:set_string("infotext", '"' .. text .. '"')
+		else
+			meta:set_string("infotext", '')
+		end
 	end,
 })
 
@@ -337,7 +348,7 @@ minetest.register_node("default:sign_on_wall", {
 		"sign_wall.png",
 		"sign_wall.png",
 		"sign_wall.png",
-  "sign_wall.png",
+		"sign_back.png",
 		"sign_wall.png"
 	},
 	inventory_image = "sign_wall.png",
@@ -346,36 +357,43 @@ minetest.register_node("default:sign_on_wall", {
 	paramtype2 = "wallmounted",
 	selection_box = {
 		type = "wallmounted",
-		--wall_top = <default>
-		--wall_bottom = <default>
-		--wall_side = <default>
 	},
 	sunlight_propagates = true,
 	walkable = false,
-	groups = {choppy=2,dig_immediate=2,attached_node=1},
+	groups = {choppy=2, dig_immediate=2, attached_node=1},
 	legacy_wallmounted = true,
 	sounds = default.node_sound_defaults(),
+
 	on_construct = function(pos)
-		--local n = minetest.get_node(pos)
 		local meta = minetest.get_meta(pos)
 		meta:set_string("formspec", "field[text;;${text}]")
-		meta:set_string("infotext", "\"\"")
 	end,
 	on_receive_fields = function(pos, formname, fields, sender)
-		--print("Sign at "..minetest.pos_to_string(pos).." got "..dump(fields))
-		if minetest.is_protected(pos, sender:get_player_name()) then
-			minetest.record_protection_violation(pos, sender:get_player_name())
+		if not fields.quit then
+			return -- workaround for https://github.com/luanti-org/luanti/issues/16187
+		end
+		local player_name = sender:get_player_name()
+		if minetest.is_protected(pos, player_name) then
+			minetest.record_protection_violation(pos, player_name)
 			return
 		end
+		local text = fields.text
+		if not text then return end
+		if #text > 512 then
+			minetest.chat_send_player(player_name, "Text too long")
+			return
+		end
+		text = text:gsub("[%z-\8\11-\31\127]", "")
+		minetest.log("action", player_name .. " wrote to sign at " .. minetest.pos_to_string(pos) .. ": " .. text)
 		local meta = minetest.get_meta(pos)
-		fields.text = fields.text or ""
-		print((sender:get_player_name() or "").." wrote \""..fields.text..
-				"\" to sign at "..minetest.pos_to_string(pos))
-		meta:set_string("text", fields.text)
-		meta:set_string("infotext", '"'..fields.text..'"')
+		meta:set_string("text", text)
+		if #text > 0 then
+			meta:set_string("infotext", '"' .. text .. '"')
+		else
+			meta:set_string("infotext", '')
+		end
 	end,
 })
-
 
 minetest.register_node("default:ladder", {
 	description = "Ladder",
@@ -836,63 +854,75 @@ minetest.register_abm({
 })
 
 -- Water and lava nodes
-
 minetest.register_node("default:water_flowing", {
-	description = "Flowing Water",
-	tiles = { "water.png" },
-	inventory_image = "water.png",
-	drawtype = "flowingliquid",
-	special_tiles = {
-		{
-			image="water_flowing.png",
-			backface_culling=true,
-			animation={type="vertical_frames", aspect_w=16, aspect_h=16, length=0.8}
-		},
-	},
-	alpha = WATER_ALPHA,
-	paramtype = "light",
-	paramtype2 = "flowingliquid",
-	walkable = false,
-	pointable = false,
-	diggable = false,
-	buildable_to = true,
-	drop = "",
-	drowning = 1,
-	liquidtype = "flowing",
-	liquid_alternative_flowing = "default:water_flowing",
-	liquid_alternative_source = "default:water_source",
-	liquid_viscosity = WATER_VISC,
-	post_effect_color = {a=64, r=100, g=100, b=200},
-	groups = {water=3, liquid=3, puts_out_fire=1, not_in_creative_inventory=1, freezes=1, melt_around=1},
+    description = "Flowing Water",
+    drawtype = "flowingliquid",
+    tiles = {"water.png"},
+    special_tiles = {
+        {
+            name = "water_flowing.png",
+            backface_culling = false,
+            animation = {
+                type = "vertical_frames",
+                aspect_w = 16,
+                aspect_h = 16,
+                length = 0.8
+            }
+        },
+        {
+            name = "water_flowing.png",
+            backface_culling = false,
+            animation = {
+                type = "vertical_frames",
+                aspect_w = 16,
+                aspect_h = 16,
+                length = 0.8
+            }
+        }
+    },
+    use_texture_alpha = "blend",
+    paramtype = "light",
+    paramtype2 = "flowingliquid",
+    walkable = false,
+    pointable = false,
+    diggable = false,
+    buildable_to = true,
+    drop = "",
+    drowning = 1,
+    liquidtype = "flowing",
+    liquid_alternative_flowing = "default:water_flowing",
+    liquid_alternative_source = "default:water_source",
+    liquid_viscosity = WATER_VISC,
+    post_effect_color = {a = 64, r = 100, g = 100, b = 200},
+    groups = {water = 3, liquid = 3, puts_out_fire = 1, not_in_creative_inventory = 1, freezes = 1, melt_around = 1}
 })
 
 minetest.register_node("default:water_source", {
-	description = "Water Source",
-	drawtype = "liquid",
-	tiles = { "water.png" },
 	inventory_image = "water.png",
-	special_tiles = {
-		-- New-style water source material (mostly unused)
-		{
-			name="water.png",
-			backface_culling = false,
-		}
-	},
-	alpha = WATER_ALPHA,
-	paramtype = "light",
-	walkable = false,
-	pointable = false,
-	diggable = false,
-	buildable_to = true,
-	drop = "",
-	drowning = 1,
-	liquidtype = "source",
-	liquid_alternative_flowing = "default:water_flowing",
-	liquid_alternative_source = "default:water_source",
-	liquid_viscosity = WATER_VISC,
-	freezemelt = "default:ice",
-	post_effect_color = {a=64, r=100, g=100, b=200},
-	groups = {water=3, liquid=3, puts_out_fire=1, freezes=1},
+    description = "Water Source",
+    drawtype = "liquid",
+    tiles = {"water.png"},
+    special_tiles = {
+        {
+            name = "water.png",
+            backface_culling = false
+        }
+    },
+    use_texture_alpha = "blend",
+    paramtype = "light",
+    walkable = false,
+    pointable = false,
+    diggable = false,
+    buildable_to = true,
+    drop = "",
+    drowning = 1,
+    liquidtype = "source",
+    liquid_alternative_flowing = "default:water_flowing",
+    liquid_alternative_source = "default:water_source",
+    liquid_viscosity = WATER_VISC,
+    freezemelt = "default:ice",
+    post_effect_color = {a = 64, r = 100, g = 100, b = 200},
+    groups = {water = 3, liquid = 3, puts_out_fire = 1, freezes = 1}
 })
 
 minetest.register_node("default:lava_flowing", {
@@ -902,7 +932,8 @@ minetest.register_node("default:lava_flowing", {
 	tiles = { "lava_flowing.png" },
 	special_tiles = {
 		{
-			image="lava_flowing.png",
+			--image="lava_flowing.png",
+			name="lava_flowing.png",
 			backface_culling=false,
 			animation={type="vertical_frames", aspect_w=16, aspect_h=16, length=2}
 		},
@@ -954,4 +985,6 @@ minetest.register_node("default:lava_source", {
 	damage_per_second = 4*2,
 	post_effect_color = {a=192, r=255, g=64, b=0},
 	groups = {lava=3, liquid=2, hot=3, igniter=1},
+})
+
 })
