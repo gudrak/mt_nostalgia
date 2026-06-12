@@ -310,3 +310,12 @@ minetest.register_craft({
 		{"default:stone", "default:stone", "default:stone"},		
 	}
 })
+
+minetest.register_craft({
+	output = "default:apple_iron",
+	recipe = {
+		{"default:steel_ingot", "default:steel_ingot", "default:steel_ingot"},
+		{"default:steel_ingot", "default:apple", "default:steel_ingot"},
+		{"default:steel_ingot", "default:steel_ingot", "default:steel_ingot"},
+	}
+})
