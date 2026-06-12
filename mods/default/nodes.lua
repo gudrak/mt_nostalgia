@@ -932,7 +932,6 @@ minetest.register_node("default:lava_flowing", {
 	tiles = { "lava_flowing.png" },
 	special_tiles = {
 		{
-			--image="lava_flowing.png",
 			name="lava_flowing.png",
 			backface_culling=false,
 			animation={type="vertical_frames", aspect_w=16, aspect_h=16, length=2}
@@ -987,4 +986,24 @@ minetest.register_node("default:lava_source", {
 	groups = {lava=3, liquid=2, hot=3, igniter=1},
 })
 
+minetest.register_node("default:wood_glass", {
+		description = "Wood Glass",
+		drawtype = "glasslike_framed",
+		tiles = {"wood_glass_inv.png"},
+		inventory_image = "wood_glass_inv.png",
+		paramtype = "light",
+		sunlight_propagates = true,
+		sounds = default.node_sound_glass_defaults(),
+		groups = {cracky=3,oddly_breakable_by_hand=3},
+})
+
+minetest.register_node("default:stone_glass", {
+		description = "Stone Glass",
+		drawtype = "glasslike_framed",
+		tiles = {"stone_glass_inv.png"},
+		inventory_image = "stone_glass_inv.png",
+		paramtype = "light",
+		sunlight_propagates = true,
+		sounds = default.node_sound_glass_defaults(),
+		groups = {cracky=3, stone=1},																
 })
