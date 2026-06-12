@@ -28,7 +28,7 @@ minetest.register_craftitem("default:rat" ,{
 				return
 			end
 			pointed_thing.under.y = pointed_thing.under.y + 1
-			minetest.env:add_entity(pointed_thing.under, "mobs:rat")
+			minetest.add_entity(pointed_thing.under, "mobs:rat")
 			itemstack:take_item()
 			return itemstack
 		end,
