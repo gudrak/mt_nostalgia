@@ -1007,3 +1007,26 @@ minetest.register_node("default:stone_glass", {
 		sounds = default.node_sound_glass_defaults(),
 		groups = {cracky=3, stone=1},																
 })
+
+minetest.register_node("default:apple_iron", {
+        description = "Apple Iron",
+        drawtype = "plantlike",
+        visual_scale = 1.0,
+        tiles = {"apple_iron.png"},
+        inventory_image = "apple_iron.png",
+        paramtype = "light",
+        sunlight_propagates = true,
+        walkable = false,
+        selection_box = {
+                type = "fixed",
+                fixed = {-0.2, -0.5, -0.2, 0.2, 0, 0.2}
+        },
+        groups = {fleshy=3,dig_immediate=3,flammable=2,leafdecay=3,leafdecay_drop=1},
+        on_use = minetest.item_eat(8),
+        sounds = default.node_sound_leaves_defaults(),
+        after_place_node = function(pos, placer, itemstack)
+                if placer:is_player() then
+                        minetest.set_node(pos, {name="default:apple_iron", param2=1})
+                end
+        end,
+})
